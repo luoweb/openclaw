@@ -11,6 +11,8 @@ import type {
 import { VIEWER_LOADER_PATH } from "./viewer-assets.js";
 
 const DEFAULT_FILE_NAME = "diff.txt";
+const MAX_PATCH_FILE_COUNT = 128;
+const MAX_PATCH_TOTAL_LINES = 120_000;
 
 function escapeCssString(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
@@ -195,6 +197,7 @@ function buildHtmlDocument(params: {
   title: string;
   bodyHtml: string;
   theme: DiffRenderOptions["presentation"]["theme"];
+  imageMaxWidth: number;
   runtimeMode: "viewer" | "image";
 }): string {
   return `<!doctype html>
@@ -209,12 +212,18 @@ function buildHtmlDocument(params: {
         box-sizing: border-box;
       }
 
+      html,
+      body {
+        min-height: 100%;
+      }
+
       html {
         background: #05070b;
       }
 
       body {
         margin: 0;
+        min-height: 100vh;
         padding: 22px;
         font-family:
           "Fira Code",
@@ -237,7 +246,7 @@ function buildHtmlDocument(params: {
       }
 
       .oc-frame[data-render-mode="image"] {
-        max-width: 960px;
+        max-width: ${Math.max(640, Math.round(params.imageMaxWidth))}px;
       }
 
       [data-openclaw-diff-root] {
@@ -344,6 +353,17 @@ async function renderPatchDiff(
   if (files.length === 0) {
     throw new Error("Patch input did not contain any file diffs.");
   }
+  if (files.length > MAX_PATCH_FILE_COUNT) {
+    throw new Error(`Patch input contains too many files (max ${MAX_PATCH_FILE_COUNT}).`);
+  }
+  const totalLines = files.reduce((sum, fileDiff) => {
+    const splitLines = Number.isFinite(fileDiff.splitLineCount) ? fileDiff.splitLineCount : 0;
+    const unifiedLines = Number.isFinite(fileDiff.unifiedLineCount) ? fileDiff.unifiedLineCount : 0;
+    return sum + Math.max(splitLines, unifiedLines, 0);
+  }, 0);
+  if (totalLines > MAX_PATCH_TOTAL_LINES) {
+    throw new Error(`Patch input is too large to render (max ${MAX_PATCH_TOTAL_LINES} lines).`);
+  }
 
   const viewerPayloadOptions = buildDiffOptions(options);
   const imagePayloadOptions = buildDiffOptions(buildImageRenderOptions(options));
@@ -394,12 +414,14 @@ export async function renderDiffDocument(
       title,
       bodyHtml: rendered.viewerBodyHtml,
       theme: options.presentation.theme,
+      imageMaxWidth: options.image.maxWidth,
       runtimeMode: "viewer",
     }),
     imageHtml: buildHtmlDocument({
       title,
       bodyHtml: rendered.imageBodyHtml,
       theme: options.presentation.theme,
+      imageMaxWidth: options.image.maxWidth,
       runtimeMode: "image",
     }),
     title,
